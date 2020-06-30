@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.Bundle;
+import android.os.CountDownTimer;
 import android.os.IBinder;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -17,17 +18,24 @@ import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.method.ScrollingMovementMethod;
 import android.text.style.ForegroundColorSpan;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
 public class TerminalFragment extends Fragment implements ServiceConnection, SerialListener {
-
+    String TAG = "DEBUG1";
+    int retardo = 5000;
+    int erroresPermitidos = 3;
+    int erroresCometidos = 0;
+    int posicionActual = 0;
+    CountDownTimer waitTimer;
     private enum Connected { False, Pending, True }
 
     private String deviceAddress;
@@ -39,6 +47,9 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     private SerialService service;
     private boolean initialStart = true;
     private Connected connected = Connected.False;
+    private String[] secuencia;
+
+    EditText sendText;
 
     /*
      * Lifecycle
@@ -120,9 +131,12 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         receiveText = view.findViewById(R.id.receive_text);                          // TextView performance decreases with number of spans
         receiveText.setTextColor(getResources().getColor(R.color.colorRecieveText)); // set as default color to reduce number of spans
         receiveText.setMovementMethod(ScrollingMovementMethod.getInstance());
-        TextView sendText = view.findViewById(R.id.send_text);
+        sendText = (EditText) view.findViewById(R.id.send_text);
         View sendBtn = view.findViewById(R.id.send_btn);
-        sendBtn.setOnClickListener(v -> send(sendText.getText().toString()));
+        sendBtn.setOnClickListener(v -> {
+            iniciarEnvios();
+        });
+        posicionActual = 0;
         return view;
     }
 
@@ -187,7 +201,7 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         try {
             SpannableStringBuilder spn = new SpannableStringBuilder(str+'\n');
             spn.setSpan(new ForegroundColorSpan(getResources().getColor(R.color.colorSendText)), 0, spn.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-            receiveText.append(spn);
+            //receiveText.append(spn);
             byte[] data = (str + newline).getBytes();
             socket.write(data);
         } catch (Exception e) {
@@ -196,7 +210,9 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     }
 
     private void receive(byte[] data) {
-        receiveText.append(new String(data));
+        String valorRecibido = new String(data);
+        pantalla("Recibido->" + valorRecibido);
+        validarRecepcion(valorRecibido);
     }
 
     private void status(String str) {
@@ -229,6 +245,52 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     public void onSerialIoError(Exception e) {
         status("connection lost: " + e.getMessage());
         disconnect();
+    }
+
+    private void iniciarEnvios() {
+        String cadena = sendText.getText().toString();
+        secuencia = cadena.split(",");
+        enviarMensaje();
+    }
+
+    private void enviarMensaje() {
+        if(connected != Connected.True) {
+            Toast.makeText(getActivity(), "not connected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if(posicionActual < secuencia.length) {
+            String luz = secuencia[posicionActual].toString();
+            pantalla("*******************************");
+            pantalla("Enviado -> " + luz);
+            send(luz);
+        } else {
+            pantalla("Secuencia Terminada");
+            disconnect();
+        }
+    }
+
+    private void pantalla(String texto) {
+        receiveText.append(texto + newline);
+    }
+
+    private void validarRecepcion(String valorRecibido) {
+        if(valorRecibido.equals(secuencia[posicionActual].toString())) {
+            pantalla("Pulsación correcta");
+            posicionActual ++;
+            enviarMensaje();
+        } else {
+            pantalla("Error");
+            erroresCometidos ++;
+
+            if(erroresCometidos < erroresPermitidos) {
+                enviarMensaje();
+            } else {
+                pantalla("Alcanzó el límite de errores permitidos");
+                disconnect();
+            }
+
+        }
     }
 
 }
